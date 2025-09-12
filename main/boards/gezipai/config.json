@@ -3,7 +3,7 @@
     "builds": [
         {
             "name": "gezipai",
-            "sdkconfig_append": []
+            "sdkconfig_append": ["sdkconfig.gezipai"]
         }
     ]
 }

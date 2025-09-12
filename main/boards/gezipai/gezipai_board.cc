@@ -1,6 +1,8 @@
 #include "wifi_board.h"
 #include "codecs/es8311_audio_codec.h"
 #include "config.h"
+#include "bluetooth_mouse.h"
+
 #include <esp_log.h>
 #include <driver/i2c_master.h>
 #include <driver/gpio.h>
@@ -11,6 +13,7 @@ class GezipaiBoard : public WifiBoard
 {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
+    BluetoothMouse* bluetooth_mouse_;
 
     void InitializeCodecI2c()
     {
@@ -34,8 +37,23 @@ private:
     {
     }
 
+    void InitializeBluetoothMouse()
+    {
+        ESP_LOGI(TAG, "初始化蓝牙鼠标...");
+        bluetooth_mouse_ = new BluetoothMouse();
+        bluetooth_mouse_->SetDeviceName("Gezipai Mouse");
+        
+        if (bluetooth_mouse_->Initialize()) {
+            ESP_LOGI(TAG, "蓝牙鼠标初始化成功");
+        } else {
+            ESP_LOGE(TAG, "蓝牙鼠标初始化失败");
+            delete bluetooth_mouse_;
+            bluetooth_mouse_ = nullptr;
+        }
+    }
+
 public:
-    GezipaiBoard()
+    GezipaiBoard() : bluetooth_mouse_(nullptr)
     {
         ESP_LOGI(TAG, "Initializing Gezipai Board");
         // init gpio led
@@ -50,6 +68,22 @@ public:
 
         InitializeCodecI2c();
         InitializeTools();
+        InitializeBluetoothMouse(); // 蓝牙鼠标开机自启动
+    }
+
+    ~GezipaiBoard()
+    {
+        if (bluetooth_mouse_) {
+            bluetooth_mouse_->Deinitialize();
+            delete bluetooth_mouse_;
+            bluetooth_mouse_ = nullptr;
+        }
+    }
+
+    // 获取蓝牙鼠标实例
+    BluetoothMouse* GetBluetoothMouse() 
+    {
+        return bluetooth_mouse_;
     }
 
     virtual AudioCodec *GetAudioCodec() override
