@@ -35,20 +35,20 @@ private:
     {
         ESP_LOGI(TAG, "Initializing BLE HID Mouse...");
         
-        // ble_hid_mouse_config_t config = BLE_HID_MOUSE_DEFAULT_CONFIG();
+        ble_hid_mouse_config_t config = BLE_HID_MOUSE_DEFAULT_CONFIG();
         
-        // esp_err_t ret = ble_hid_mouse_init(&config);
-        // if (ret != ESP_OK) {
-        //     ESP_LOGE(TAG, "Failed to initialize BLE HID mouse: %s", esp_err_to_name(ret));
-        //     return;
-        // }
+        esp_err_t ret = ble_hid_mouse_init(&config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize BLE HID mouse: %s", esp_err_to_name(ret));
+            return;
+        }
         
-        // ret = ble_hid_mouse_start();
-        // if (ret != ESP_OK) {
-        //     ESP_LOGE(TAG, "Failed to start BLE HID mouse: %s", esp_err_to_name(ret));
-        // } else {
-        //     ESP_LOGI(TAG, "BLE HID mouse started successfully");
-        // }
+        ret = ble_hid_mouse_start();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start BLE HID mouse: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "BLE HID mouse started successfully");
+        }
     }
 
     void InitializeTools()
