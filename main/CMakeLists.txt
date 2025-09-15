@@ -130,7 +130,7 @@ endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
-                    REQUIRES bt 
+                    # REQUIRES bt esp_hid app_update spi_flash esp_adc esp_common esp_psram efuse 78__esp-opus 78__esp-opus-encoder 
                     WHOLE_ARCHIVE
                     )
 # # 添加针对BLE HID鼠标组件的特殊编译选项
