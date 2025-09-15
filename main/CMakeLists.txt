@@ -24,9 +24,14 @@ set(SOURCES "audio/audio_codec.cc"
             "settings.cc"
             "device_state_event.cc"
             "main.cc"
+            "ble_hid_mouse/ble_hid_mouse.c"
+            "ble_hid_mouse/qmi8658.c"
+            "ble_hid_mouse/esp_hidd_prf_api.c"
+            "ble_hid_mouse/hid_device_le_prf.c"
+            "ble_hid_mouse/hid_dev.c"
             )
 
-set(INCLUDE_DIRS "." "display" "audio" "protocols")
+set(INCLUDE_DIRS "." "display" "audio" "protocols" "ble_hid_mouse")
 
 # 添加板级公共文件
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)
@@ -125,8 +130,12 @@ endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                    REQUIRES bt esp_hid app_update spi_flash esp_adc esp_common 78__esp-opus 78__esp-opus-encoder 
                     WHOLE_ARCHIVE
                     )
+# 添加针对BLE HID鼠标组件的特殊编译选项
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-unused-const-variable)
+
 
 # 使用 target_compile_definitions 来定义 BOARD_TYPE, BOARD_NAME
 # 如果 BOARD_NAME 为空，则使用 BOARD_TYPE
