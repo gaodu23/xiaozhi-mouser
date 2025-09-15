@@ -186,6 +186,7 @@ static esp_err_t gyro_calibration()
 static void mouse_sensor_task(void *arg)
 {
     TickType_t last = xTaskGetTickCount();
+    uint32_t last_adc_print_time = 0;
     if (!gyro_calibrated)
     {
         if (gyro_calibration() != ESP_OK)
@@ -215,13 +216,32 @@ static void mouse_sensor_task(void *arg)
         }
         int8_t mx = (fabs(gx) > g_config.gyro_threshold) ? (int8_t)(1.2 * gx * g_config.mouse_sensitivity) : 0;
         int8_t my = (fabs(gz) > g_config.gyro_threshold) ? (int8_t)(1.2 * gz * g_config.mouse_sensitivity) : 0;
-        button_state_t new_state = read_button_state();
+        int adc_raw = 0;
+        {
+            int sum = 0;
+            for (int i = 0; i < ADC_SAMPLES; i++)
+            {
+                int raw;
+                if (adc_oneshot_read(adc1_handle, BUTTON_ADC_CHANNEL, &raw) == ESP_OK)
+                    sum += raw;
+                vTaskDelay(1);
+            }
+            adc_raw = sum / ADC_SAMPLES;
+        }
+        // 每秒打印一次ADC值
         uint32_t now = esp_log_timestamp();
-        if (new_state != current_button_state && now - button_state_start_time > BUTTON_DEBOUNCE_TIME)
+        if (now - last_adc_print_time > 1000)
+        {
+            ESP_LOGI(TAG, "ADC原始值: %d", adc_raw);
+            last_adc_print_time = now;
+        }
+        button_state_t new_state = read_button_state();
+        uint32_t now_time = esp_log_timestamp();
+        if (new_state != current_button_state && now_time - button_state_start_time > BUTTON_DEBOUNCE_TIME)
         {
             last_button_state = current_button_state;
             current_button_state = new_state;
-            button_state_start_time = now;
+            button_state_start_time = now_time;
         }
         if (sec_conn)
         {
@@ -230,16 +250,27 @@ static void mouse_sensor_task(void *arg)
                 buttons = 1;
             else if (current_button_state == BUTTON_STATE_RIGHT)
                 buttons = 2;
-            else if (current_button_state == BUTTON_STATE_SCROLL_UP && current_button_state != last_button_state)
+            
+            // 滚轮事件处理
+            if (current_button_state == BUTTON_STATE_SCROLL_UP)
             {
-                esp_hidd_send_mouse_value_with_wheel(hid_conn_id, 0, 0, 0, 1);
+                // 持续滚动或首次按下时滚动
+                if (current_button_state == last_button_state || current_button_state != last_button_state)
+                {
+                    esp_hidd_send_mouse_value_with_wheel(hid_conn_id, 0, 0, 0, 1);
+                }
             }
-            else if (current_button_state == BUTTON_STATE_SCROLL_DOWN && current_button_state != last_button_state)
+            else if (current_button_state == BUTTON_STATE_SCROLL_DOWN)
             {
-                esp_hidd_send_mouse_value_with_wheel(hid_conn_id, 0, 0, 0, -1);
+                // 持续滚动或首次按下时滚动
+                if (current_button_state == last_button_state || current_button_state != last_button_state)
+                {
+                    esp_hidd_send_mouse_value_with_wheel(hid_conn_id, 0, 0, 0, -1);
+                }
             }
-            if (mx || my || buttons)
-                esp_hidd_send_mouse_value(hid_conn_id, buttons, mx, my);
+            
+            // 鼠标移动和按键事件始终发送，无论是否按下按键
+            esp_hidd_send_mouse_value(hid_conn_id, buttons, mx, my);
         }
         vTaskDelayUntil(&last, pdMS_TO_TICKS(g_config.sample_rate_ms));
     }
