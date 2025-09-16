@@ -576,7 +576,7 @@ void Application::MainEventLoop() {
             if (clock_ticks_ % 10 == 0) {
                 // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
                 // SystemInfo::PrintTaskList();
-                // SystemInfo::PrintHeapStats();
+                SystemInfo::PrintHeapStats();
             }
         }
     }

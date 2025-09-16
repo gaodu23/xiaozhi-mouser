@@ -43,12 +43,6 @@ private:
             return;
         }
         
-        ret = ble_hid_mouse_start();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start BLE HID mouse: %s", esp_err_to_name(ret));
-        } else {
-            ESP_LOGI(TAG, "BLE HID mouse started successfully");
-        }
     }
 
     void InitializeTools()

@@ -15,39 +15,39 @@ extern "C" {
 #endif
 
 
-/* HID报告类型 */
+/* HID Report type */
 #define HID_TYPE_INPUT       1
 #define HID_TYPE_OUTPUT      2
 #define HID_TYPE_FEATURE     3
 
-// HID键盘/键盘用法ID（USB HID用法表规范中可用代码的子集）
-#define HID_KEY_RESERVED       0    // 无事件指示
-#define HID_KEY_A              4    // 键盘a和A
-#define HID_KEY_B              5    // 键盘b和B
-#define HID_KEY_C              6    // 键盘c和C
-#define HID_KEY_D              7    // 键盘d和D
-#define HID_KEY_E              8    // 键盘e和E
-#define HID_KEY_F              9    // 键盘f和F
-#define HID_KEY_G              10   // 键盘g和G
-#define HID_KEY_H              11   // 键盘h和H
-#define HID_KEY_I              12   // 键盘i和I
-#define HID_KEY_J              13   // 键盘j和J
-#define HID_KEY_K              14   // 键盘k和K
-#define HID_KEY_L              15   // 键盘l和L
-#define HID_KEY_M              16   // 键盘m和M
-#define HID_KEY_N              17   // 键盘n和N
-#define HID_KEY_O              18   // 键盘o和O
-#define HID_KEY_P              19   // 键盘p和P
-#define HID_KEY_Q              20   // 键盘q和Q
-#define HID_KEY_R              21   // 键盘r和R
-#define HID_KEY_S              22   // 键盘s和S
-#define HID_KEY_T              23   // 键盘t和T
-#define HID_KEY_U              24   // 键盘u和U
-#define HID_KEY_V              25   // 键盘v和V
-#define HID_KEY_W              26   // 键盘w和W
-#define HID_KEY_X              27   // 键盘x和X
-#define HID_KEY_Y              28   // 键盘y和Y
-#define HID_KEY_Z              29   // 键盘z和Z
+// HID Keyboard/Keypad Usage IDs (subset of the codes available in the USB HID Usage Tables spec)
+#define HID_KEY_RESERVED       0    // No event inidicated
+#define HID_KEY_A              4    // Keyboard a and A
+#define HID_KEY_B              5    // Keyboard b and B
+#define HID_KEY_C              6    // Keyboard c and C
+#define HID_KEY_D              7    // Keyboard d and D
+#define HID_KEY_E              8    // Keyboard e and E
+#define HID_KEY_F              9    // Keyboard f and F
+#define HID_KEY_G              10   // Keyboard g and G
+#define HID_KEY_H              11   // Keyboard h and H
+#define HID_KEY_I              12   // Keyboard i and I
+#define HID_KEY_J              13   // Keyboard j and J
+#define HID_KEY_K              14   // Keyboard k and K
+#define HID_KEY_L              15   // Keyboard l and L
+#define HID_KEY_M              16   // Keyboard m and M
+#define HID_KEY_N              17   // Keyboard n and N
+#define HID_KEY_O              18   // Keyboard o and O
+#define HID_KEY_P              19   // Keyboard p and p
+#define HID_KEY_Q              20   // Keyboard q and Q
+#define HID_KEY_R              21   // Keyboard r and R
+#define HID_KEY_S              22   // Keyboard s and S
+#define HID_KEY_T              23   // Keyboard t and T
+#define HID_KEY_U              24   // Keyboard u and U
+#define HID_KEY_V              25   // Keyboard v and V
+#define HID_KEY_W              26   // Keyboard w and W
+#define HID_KEY_X              27   // Keyboard x and X
+#define HID_KEY_Y              28   // Keyboard y and Y
+#define HID_KEY_Z              29   // Keyboard z and Z
 #define HID_KEY_1              30   // Keyboard 1 and !
 #define HID_KEY_2              31   // Keyboard 2 and @
 #define HID_KEY_3              32   // Keyboard 3 and #
