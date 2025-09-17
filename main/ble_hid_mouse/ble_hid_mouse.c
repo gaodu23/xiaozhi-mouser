@@ -97,48 +97,58 @@ static uint32_t button_state_start_time = 0;                    /* 按键状态�
 
 /* 卡尔曼滤波器结构定义 */
 typedef struct {
-    float x;      /* 状态估计 */
-    float p;      /* 估计误差协方差 */
-    float q;      /* 过程噪声协方差 */
-    float r;      /* 测量噪声协方差 */
-    float k;      /* 卡尔曼增益 */
+    float x;      /* 状态估计 - 当前最佳估计值 */
+    float p;      /* 估计误差协方差 - 当前估计的不确定性 */
+    float q;      /* 过程噪声协方差 - 模型预测的不确定性 */
+    float r;      /* 测量噪声协方差 - 传感器测量的不确定性 */
+    float k;      /* 卡尔曼增益 - 决定信任模型还是测量的权重系数 */
 } kalman_filter_t;
 
 /**
  * @brief 初始化卡尔曼滤波器
  *
  * @param filter 卡尔曼滤波器指针
- * @param q 过程噪声协方差
- * @param r 测量噪声协方差
- * @param p 初始估计误差协方差
+ * @param q 过程噪声协方差 - 控制对模型预测的信任度（较小值表示更信任模型）
+ * @param r 测量噪声协方差 - 控制对传感器测量的信任度（较小值表示更信任测量）
+ * @param p 初始估计误差协方差 - 初始状态的不确定性
  * @param initial_value 初始状态估计值
  */
 static void kalman_init(kalman_filter_t *filter, float q, float r, float p, float initial_value)
 {
-    filter->x = initial_value;
-    filter->p = p;
-    filter->q = q;
-    filter->r = r;
+    filter->x = initial_value;  /* 设置初始状态估计 */
+    filter->p = p;              /* 设置初始估计误差协方差 */
+    filter->q = q;              /* 设置过程噪声协方差 */
+    filter->r = r;              /* 设置测量噪声协方差 */
 }
 
 /**
  * @brief 卡尔曼滤波器更新
  *
+ * 实现一维卡尔曼滤波算法，用于平滑陀螺仪数据。
+ * 卡尔曼滤波过程包括两个主要步骤：预测和更新。
+ *
  * @param filter 卡尔曼滤波器指针
- * @param measurement 测量值
+ * @param measurement 传感器测量值
  * @return float 滤波后的估计值
  */
 static float kalman_update(kalman_filter_t *filter, float measurement)
 {
-    /* 预测步骤 */
+    /* 预测步骤 - 根据上一状态预测当前状态 */
+    /* 由于我们的模型是静态的（无控制输入），状态预测值保持不变 */
+    /* 误差协方差增加，表示随时间增加的不确定性 */
     filter->p = filter->p + filter->q;
     
-    /* 更新步骤 */
+    /* 更新步骤 - 根据新测量值修正预测 */
+    /* 计算卡尔曼增益 - 决定多大程度信任测量值vs预测值 */
     filter->k = filter->p / (filter->p + filter->r);
+    
+    /* 更新状态估计 - 结合预测和测量，卡尔曼增益决定权重 */
     filter->x = filter->x + filter->k * (measurement - filter->x);
+    
+    /* 更新误差协方差 - 反映新估计的确定性提高 */
     filter->p = (1 - filter->k) * filter->p;
     
-    return filter->x;
+    return filter->x;  /* 返回当前最佳估计值 */
 }
 
 /* 函数声明 */
@@ -175,10 +185,16 @@ static esp_ble_adv_params_t hidd_adv_params = {
     .channel_map = ADV_CHNL_ALL,
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY};
 
-
-
 /**
  * @brief 初始化IMU传感器
+ * 
+ * 初始化QMI8658 6轴IMU传感器，包括：
+ * 1. 分配传感器句柄内存
+ * 2. 配置并初始化I2C总线
+ * 3. 初始化传感器
+ * 4. 设置采样率和范围参数
+ * 
+ * @return bool 初始化成功返回true，失败返回false
  */
 static bool init_imu_sensor()
 {
@@ -188,7 +204,7 @@ static bool init_imu_sensor()
         imu_sensor = malloc(sizeof(qmi8658_handle_t));
         if (!imu_sensor)
         {
-            ESP_LOGE(TAG, "分配IMU失败");
+            ESP_LOGE(TAG, "分配IMU内存失败");
             return false;
         }
     }
@@ -201,11 +217,12 @@ static bool init_imu_sensor()
             .i2c_port = I2C_NUM_1,
             .scl_io_num = QMI8658_I2C_SCL_PIN,
             .sda_io_num = QMI8658_I2C_SDA_PIN,
-            .flags.enable_internal_pullup = true};
+            .flags.enable_internal_pullup = true
+        };
 
         if (i2c_new_master_bus(&cfg, &i2c_master_bus) != ESP_OK)
         {
-            ESP_LOGE(TAG, "I2C失败");
+            ESP_LOGE(TAG, "I2C总线初始化失败");
             return false;
         }
     }
@@ -213,15 +230,17 @@ static bool init_imu_sensor()
     /* 初始化QMI8658传感器 */
     if (!qmi8658_init(imu_sensor, i2c_master_bus, QMI8658_ADDRESS_LOW))
     {
-        ESP_LOGE(TAG, "QMI8658初始化失败");
+        ESP_LOGE(TAG, "QMI8658传感器初始化失败");
         return false;
     }
 
-    /* 配置传感器参数 - 提高采样率 */
-    qmi8658_set_gyro_range(imu_sensor, QMI8658_GYRO_RANGE_256DPS);
-    qmi8658_set_gyro_odr(imu_sensor, QMI8658_GYRO_ODR_500HZ); // 提高到500Hz
-    qmi8658_set_accel_range(imu_sensor, QMI8658_ACCEL_RANGE_4G);
-    qmi8658_set_accel_odr(imu_sensor, QMI8658_ACCEL_ODR_500HZ); // 提高到500Hz
+    /* 配置传感器参数 - 高采样率以提高响应性 */
+    qmi8658_set_gyro_range(imu_sensor, QMI8658_GYRO_RANGE_256DPS);  /* 设置陀螺仪量程为±256°/s */
+    qmi8658_set_gyro_odr(imu_sensor, QMI8658_GYRO_ODR_500HZ);       /* 陀螺仪采样率500Hz */
+    qmi8658_set_accel_range(imu_sensor, QMI8658_ACCEL_RANGE_4G);    /* 设置加速度计量程为±4g */
+    qmi8658_set_accel_odr(imu_sensor, QMI8658_ACCEL_ODR_500HZ);     /* 加速度计采样率500Hz */
+    
+    /* 使能陀螺仪和加速度计 */
     qmi8658_enable_sensors(imu_sensor, QMI8658_ENABLE_GYRO | QMI8658_ENABLE_ACCEL);
 
     imu_initialized = true;
@@ -230,9 +249,13 @@ static bool init_imu_sensor()
 
 /**
  * @brief 初始化按钮ADC
+ * 
+ * 初始化ADC用于读取按钮状态。
+ * 按钮使用分压电路连接到ADC通道，不同按钮产生不同的ADC值。
  */
 static void init_button_adc()
 {
+    /* 避免重复初始化 */
     if (adc_initialized)
     {
         return;
@@ -240,70 +263,79 @@ static void init_button_adc()
 
     /* 初始化ADC单次转换单元 */
     adc_oneshot_unit_init_cfg_t init_cfg = {
-        .unit_id = ADC_UNIT_1};
+        .unit_id = ADC_UNIT_1
+    };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_cfg, &adc1_handle));
 
     /* 配置ADC通道 */
     adc_oneshot_chan_cfg_t chan_cfg = {
-        .atten = ADC_ATTEN_DB_12,
-        .bitwidth = ADC_BITWIDTH_DEFAULT};
+        .atten = ADC_ATTEN_DB_12,        /* 12dB衰减，适合较大输入电压范围 */
+        .bitwidth = ADC_BITWIDTH_DEFAULT /* 使用默认位宽 */
+    };
+    /* 配置指定的ADC通道 */
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, BUTTON_ADC_CHANNEL, &chan_cfg));
 
+    ESP_LOGI(TAG, "按钮ADC初始化成功 - 通道: %d", BUTTON_ADC_CHANNEL);
     adc_initialized = true;
 }
 
 /**
- * @brief 读取按钮状态
- *
- * @return button_state_t 按钮状态
+ * @brief 读取按键状态
+ * 
+ * 通过ADC采样并对多次采样结果取平均，确定当前按键状态。
+ * 根据ADC原始值与预设阈值比较判断按下的是哪个按键。
+ * 
+ * @return button_state_t 返回按键状态枚举值
  */
 static button_state_t read_button_state()
 {
-    /* 对ADC值进行多次采样并取平均值 */
+    /* 对ADC值进行多次采样并取平均值，提高读取可靠性 */
     int sum = 0;
     for (int i = 0; i < ADC_SAMPLES; i++)
     {
         int raw;
         if (adc_oneshot_read(adc1_handle, BUTTON_ADC_CHANNEL, &raw) == ESP_OK)
             sum += raw;
-        vTaskDelay(1);
+        vTaskDelay(1);  /* 采样间隔1ms */
     }
     int adc_raw = sum / ADC_SAMPLES;
 
-    /* 根据ADC值确定按钮状态 */
+    /* 根据ADC值判断按钮状态 - 通过预设阈值区间确定 */
     button_state_t st;
-    if (adc_raw > BUTTON_IDLE_MIN)
-        st = BUTTON_STATE_IDLE;
-    else if (adc_raw <= BUTTON_UP_MAX)
-        st = BUTTON_STATE_SCROLL_UP;
-    else if (adc_raw >= BUTTON_RIGHT_MIN && adc_raw <= BUTTON_RIGHT_MAX)
-        st = BUTTON_STATE_RIGHT;
-    else if (adc_raw >= BUTTON_LEFT_MIN && adc_raw <= BUTTON_LEFT_MAX)
-        st = BUTTON_STATE_LEFT;
-    else if (adc_raw >= BUTTON_DOWN_MIN && adc_raw <= BUTTON_DOWN_MAX)
-        st = BUTTON_STATE_SCROLL_DOWN;
-    else
-        st = BUTTON_STATE_IDLE;
+    
+    if (adc_raw > BUTTON_IDLE_MIN) {
+        st = BUTTON_STATE_IDLE;      /* 无按键按下 */
+    }
+    else if (adc_raw <= BUTTON_UP_MAX) {
+        st = BUTTON_STATE_SCROLL_UP; /* 上滚动按键 */
+    }
+    else if (adc_raw >= BUTTON_RIGHT_MIN && adc_raw <= BUTTON_RIGHT_MAX) {
+        st = BUTTON_STATE_RIGHT;     /* 右按键 */
+    }
+    else if (adc_raw >= BUTTON_LEFT_MIN && adc_raw <= BUTTON_LEFT_MAX) {
+        st = BUTTON_STATE_LEFT;      /* 左按键 */
+    }
+    else if (adc_raw >= BUTTON_DOWN_MIN && adc_raw <= BUTTON_DOWN_MAX) {
+        st = BUTTON_STATE_SCROLL_DOWN; /* 下滚动按键 */
+    }
+    else {
+        st = BUTTON_STATE_IDLE;      /* 默认为空闲状态 */
+    }
 
     return st;
 }
 
-/**
- * @brief 鼠标传感器任务
- *
- * @param arg 任务参数
- */
 static void mouse_sensor_task(void *arg)
 {
-    /* 初始化卡尔曼滤波器 */
-    kalman_filter_t kalman_x, kalman_y, kalman_z;
+    /* 初始化卡尔曼滤波器 - 参数优化用于直接滤波陀螺仪数据 */
+    kalman_filter_t kalman_x, kalman_z;
+    /* 
+     * q: 过程噪声协方差 - 较小值意味着更相信模型预测
+     * r: 测量噪声协方差 - 较小值意味着更相信测量值
+     * p: 初始估计误差协方差 - 初始不确定性
+     */
     kalman_init(&kalman_x, 0.01, 0.1, 1.0, 0.0); /* X轴滤波器 - 实际为YAW */
-    kalman_init(&kalman_y, 0.01, 0.1, 1.0, 0.0); /* Y轴滤波器 */
     kalman_init(&kalman_z, 0.01, 0.1, 1.0, 0.0); /* Z轴滤波器 - 实际为PITCH */
-    
-    /* 跟踪角度变化 */
-    float angle_x = 0.0f, angle_y = 0.0f, angle_z = 0.0f;
-    float last_angle_x = 0.0f, last_angle_z = 0.0f;
     
     /* 调试信息计时 */
     uint32_t last_debug_time = 0;
@@ -319,57 +351,32 @@ static void mouse_sensor_task(void *arg)
             qmi8658_read_gyro_dps(imu_sensor, &gx, &gy, &gz);
             qmi8658_read_accel_mg(imu_sensor, &ax, &ay, &az);
 
-            /* 计算时间增量(秒) */
-            float dt = g_config.sample_rate_ms / 1000.0f;
+            /* 直接对陀螺仪数据进行卡尔曼滤波 */
+            float filtered_gx = kalman_update(&kalman_x, gx);  // YAW轴陀螺仪
+            float filtered_gz = kalman_update(&kalman_z, gz);  // PITCH轴陀螺仪
             
-            /* 更新角度 - 通过积分角速度（坐标系已调整） */
-            angle_x += gx * dt;  // 实际是YAW (原来的ROLL)
-            angle_y += gy * dt;  // 保持不变
-            angle_z += gz * dt;  // 实际是PITCH (原来的YAW)
+            /* 将滤波后的陀螺仪数据直接转换为鼠标移动 */
+            int8_t mx = 0, my = 0;
             
-            /* 使用加速度计数据计算姿态角 (调整为正确的物理意义) */
-            // 因为IMU安装方向不同，需要调整加速度计数据的解释
-            float accel_angle_x = atan2f(ay, sqrtf(ax*ax + az*az)) * 180.0f / M_PI;  // 实际是YAW
-            float accel_angle_z = atan2f(-ax, sqrtf(ay*ay + az*az)) * 180.0f / M_PI; // 实际是PITCH
-            
-            /* 互补滤波融合数据 - 加速度计只能校正Roll和Pitch */
-            float yaw = 0.98f * angle_x + 0.02f * accel_angle_x;   // 实际是YAW (原来的Roll)
-            float pitch = 0.98f * angle_z + 0.02f * accel_angle_z; // 实际是PITCH (原来的Yaw)
-            
-            /* 卡尔曼滤波融合 */
-            float filtered_yaw = kalman_update(&kalman_x, yaw);     // 实际是YAW
-            float filtered_pitch = kalman_update(&kalman_z, pitch); // 实际是PITCH
-            
-            /* 计算角度变化 */
-            float delta_yaw = filtered_yaw - last_angle_x;    // YAW变化
-            float delta_pitch = filtered_pitch - last_angle_z; // PITCH变化
-            
-            /* 更新上次角度 */
-            last_angle_x = filtered_yaw;   // 保存YAW
-            last_angle_z = filtered_pitch; // 保存PITCH
-            
-            /* 将角度变化转换为鼠标移动 - pitch控制鼠标上下(Y轴)，yaw控制鼠标左右(X轴) */
-            int16_t mx = 0, my = 0;
-            
-            // YAW控制鼠标左右移动(X轴)
-            if (fabs(delta_yaw) > g_config.gyro_threshold) {
-                mx = (int16_t)(delta_yaw * g_config.mouse_sensitivity);
+            // 超过阈值才进行移动，避免抖动
+            if (fabs(filtered_gx) > g_config.gyro_threshold) {
+                mx = (int8_t)(filtered_gx * g_config.mouse_sensitivity);
             }
             
-            // PITCH控制鼠标上下移动(Y轴)
-            if (fabs(delta_pitch) > g_config.gyro_threshold) {
-                my = (int16_t)(delta_pitch * g_config.mouse_sensitivity);
+            if (fabs(filtered_gz) > g_config.gyro_threshold) {
+                my = (int8_t)(filtered_gz * g_config.mouse_sensitivity);
             }
-            
+
             /* 每1秒输出一次详细调试信息 */
             uint32_t current_time = esp_log_timestamp();
             if (current_time - last_debug_time > 1000)
             {
                 ESP_LOGI(TAG, "====== 鼠标传感器调试信息 ======");
-                ESP_LOGI(TAG, "滤波后角度(deg): YAW=%.2f PITCH=%.2f", 
-                         filtered_yaw, filtered_pitch);
-                ESP_LOGI(TAG, "角度变化: dYAW=%.2f dPITCH=%.2f", delta_yaw, delta_pitch);
+                ESP_LOGI(TAG, "原始陀螺仪(dps): X=%.2f Z=%.2f", gx, gz);
+                ESP_LOGI(TAG, "滤波后(dps): X=%.2f Z=%.2f", filtered_gx, filtered_gz);
                 ESP_LOGI(TAG, "鼠标移动: X=%d Y=%d", mx, my);
+                ESP_LOGI(TAG, "阈值=%.3f, 灵敏度=%.2f", 
+                         g_config.gyro_threshold, g_config.mouse_sensitivity);
                 ESP_LOGI(TAG, "================================");
                 
                 last_debug_time = current_time;
@@ -390,20 +397,27 @@ static void mouse_sensor_task(void *arg)
             uint8_t buttons = 0;
             if (current_button_state == BUTTON_STATE_LEFT)
                 buttons = 1; // 左键按下
-            else if (current_button_state == BUTTON_STATE_RIGHT)
+            else if (current_button_state == BUTTON_STATE_RIGHT) {
                 buttons = 2; // 右键按下
+            }
 
-            /* 滚轮事件处理 - 支持单击和长按 */
+            /* 滚轮事件处理 - 支持单击和长按滚动 */
             static uint32_t last_wheel_time = 0;
             /* 使用前面已定义的current_time变量 */
 
-            /* 滚轮向上滚动 */
+            /**
+             * 滚轮处理逻辑：
+             * 1. 当按键状态首次变为滚轮按键时，立即触发一次滚动
+             * 2. 长按滚轮按键时，每隔500ms触发一次滚动，实现连续滚动
+             */
+            
+            /* 滚轮向上滚动处理 */
             if (current_button_state == BUTTON_STATE_SCROLL_UP)
             {
                 /* 状态变化时立即触发一次滚动 */
                 if (current_button_state != last_button_state)
                 {
-                    esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, 1);
+                    esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, 1);  /* 向上滚动值为正 */
                     last_wheel_time = current_time;
                 }
                 /* 长按时，每隔500ms触发一次滚动 */
@@ -413,13 +427,13 @@ static void mouse_sensor_task(void *arg)
                     last_wheel_time = current_time;
                 }
             }
-            /* 滚轮向下滚动 */
+            /* 滚轮向下滚动处理 */
             else if (current_button_state == BUTTON_STATE_SCROLL_DOWN)
             {
                 /* 状态变化时立即触发一次滚动 */
                 if (current_button_state != last_button_state)
                 {
-                    esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, -1);
+                    esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, -1);  /* 向下滚动值为负 */
                     last_wheel_time = current_time;
                 }
                 /* 长按时，每隔500ms触发一次滚动 */
@@ -430,14 +444,16 @@ static void mouse_sensor_task(void *arg)
                 }
             }
 
-            static uint32_t last_time = 0;
-            uint32_t currenttime = esp_log_timestamp();
+            /* 控制鼠标移动和按键数据发送频率 */
+            static uint32_t last_movement_time = 0;
+            uint32_t current_movement_time = esp_log_timestamp();
 
-            if (currenttime - last_time > g_config.sample_rate_ms)
+            /* 根据配置的采样率发送鼠标移动和按键事件 */
+            if (current_movement_time - last_movement_time > g_config.sample_rate_ms)
             {
-                /* 鼠标移动和按键事件始终发送，支持拖拽操作 */
+                /* 发送鼠标移动和按键事件，支持拖拽操作 */
                 esp_hidd_send_mouse_value(hid_conn_id, buttons, mx, my, 0);
-                last_time = currenttime;
+                last_movement_time = current_movement_time;
             }
         }
         else
@@ -547,10 +563,17 @@ static void hidd_event_callback(esp_hidd_cb_event_t event, esp_hidd_cb_param_t *
 }
 
 /**
- * @brief 初始化BLE HID鼠标
- *
- * @param config 鼠标配置参数
- * @return esp_err_t 操作结果
+ * @brief 初始化BLE HID鼠标功能
+ * 
+ * 该函数完成以下初始化步骤：
+ * 1. 保存用户配置参数
+ * 2. 初始化蓝牙协议栈和HID配置文件
+ * 3. 设置蓝牙安全参数
+ * 4. 初始化按钮ADC和IMU传感器
+ * 5. 创建鼠标传感器任务
+ * 
+ * @param config 鼠标配置参数结构体指针
+ * @return esp_err_t ESP_OK表示成功，其他值表示错误
  */
 esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
 {
@@ -559,9 +582,10 @@ esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
     /* 保存配置 */
     memcpy(&g_config, config, sizeof(ble_hid_mouse_config_t));
 
-    ESP_LOGI(TAG, "鼠标配置 - 灵敏度: %.2f, 阈值: %.2f",
-             g_config.mouse_sensitivity, g_config.gyro_threshold);
-    /* 初始化NVS闪存 */
+    ESP_LOGI(TAG, "鼠标配置 - 灵敏度: %.2f, 阈值: %.2f, 采样率: %dms",
+             g_config.mouse_sensitivity, g_config.gyro_threshold, g_config.sample_rate_ms);
+             
+    /* 初始化NVS闪存 - 用于保存蓝牙配对信息 */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
@@ -570,7 +594,7 @@ esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
     }
     ESP_ERROR_CHECK(ret);
 
-    /* 释放经典蓝牙内存 */
+    /* 释放经典蓝牙内存以节省资源 */
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
     /* 初始化蓝牙控制器 */
@@ -582,18 +606,19 @@ esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
     ESP_ERROR_CHECK(esp_bluedroid_init());
     ESP_ERROR_CHECK(esp_bluedroid_enable());
 
-    /* 初始化HID配置 */
+    /* 初始化HID配置文件 */
     ESP_ERROR_CHECK(esp_hidd_profile_init());
     ESP_ERROR_CHECK(esp_ble_gap_register_callback(gap_event_handler));
     ESP_ERROR_CHECK(esp_hidd_register_callbacks(hidd_event_callback));
 
-    /* 设置安全参数 */
-    esp_ble_auth_req_t auth_req = ESP_LE_AUTH_REQ_SC_BOND;
-    esp_ble_io_cap_t iocap = ESP_IO_CAP_NONE;
-    uint8_t key_size = 16;
-    uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
-    uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+    /* 设置安全参数 - 启用安全连接绑定 */
+    esp_ble_auth_req_t auth_req = ESP_LE_AUTH_REQ_SC_BOND;  /* 安全连接与绑定 */
+    esp_ble_io_cap_t iocap = ESP_IO_CAP_NONE;               /* 无输入输出能力 */
+    uint8_t key_size = 16;                                  /* 密钥大小 */
+    uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;  /* 初始化密钥 */
+    uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;   /* 响应密钥 */
 
+    /* 设置安全参数 */
     esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req, sizeof(uint8_t));
     esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &iocap, sizeof(uint8_t));
     esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE, &key_size, sizeof(uint8_t));
@@ -611,9 +636,10 @@ esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
     else
     {
         ESP_LOGE(TAG, "IMU传感器初始化失败");
+        /* 即使IMU初始化失败，也继续创建任务，以便在设备连接后仍能接收按钮输入 */
     }
 
-    /* 创建鼠标任务 - 提高优先级 */
+    /* 创建鼠标任务 - 提高优先级确保实时性 */
     ESP_LOGI(TAG, "创建鼠标传感器任务");
     xTaskCreate(mouse_sensor_task, "mouse_task", 4096, NULL, 10, &mouse_task_handle);
 
