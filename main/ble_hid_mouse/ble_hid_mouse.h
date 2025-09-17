@@ -19,9 +19,9 @@ typedef struct {
 
 // 默认配置（单一模式）
 #define BLE_HID_MOUSE_DEFAULT_CONFIG() { \
-    .mouse_sensitivity = 60, \
-    .gyro_threshold = 0.15f, \
-    .sample_rate_ms = 20, \
+    .mouse_sensitivity = 2.2f, \
+    .gyro_threshold = 5.0f, \
+    .sample_rate_ms = 10, \
     .device_name = "XiaoZhi-Mouse" \
 }
 

@@ -44,7 +44,7 @@
 static const char *TAG = "BLE_HID_MOUSE";
 
 /* 按键和ADC相关参数 */
-#define BUTTON_DEBOUNCE_TIME 50      /* 按键消抖时间(ms) */
+#define BUTTON_DEBOUNCE_TIME 30      /* 从50ms减少到30ms */
 #define ADC_SAMPLES 5                /* ADC采样次数 */
 #define CALIBRATION_DURATION_MS 2000 /* 陀螺仪校准持续时间(ms) */
 
@@ -143,9 +143,6 @@ static esp_ble_adv_params_t hidd_adv_params = {
  */
 static esp_err_t gyro_calibration()
 {
-    if (!imu_initialized || !imu_sensor)
-        return ESP_ERR_INVALID_STATE;
-
     /* 采样并累计陀螺仪数据 */
     float sx = 0, sy = 0, sz = 0;
     int cnt = 0;
@@ -154,7 +151,7 @@ static esp_err_t gyro_calibration()
     while ((xTaskGetTickCount() * portTICK_PERIOD_MS - start) < CALIBRATION_DURATION_MS)
     {
         float gx, gy, gz;
-        if (qmi8658_read_gyro_rads(imu_sensor, &gx, &gy, &gz) == ESP_OK)
+        if (qmi8658_read_gyro_dps(imu_sensor, &gx, &gy, &gz) == ESP_OK)
         {
             sx += gx;
             sy += gy;
@@ -217,11 +214,11 @@ static bool init_imu_sensor()
         return false;
     }
 
-    /* 配置传感器参数 */
+    /* 配置传感器参数 - 提高采样率 */
     qmi8658_set_gyro_range(imu_sensor, QMI8658_GYRO_RANGE_256DPS);
-    qmi8658_set_gyro_odr(imu_sensor, QMI8658_GYRO_ODR_250HZ);
+    qmi8658_set_gyro_odr(imu_sensor, QMI8658_GYRO_ODR_500HZ); // 提高到500Hz
     qmi8658_set_accel_range(imu_sensor, QMI8658_ACCEL_RANGE_4G);
-    qmi8658_set_accel_odr(imu_sensor, QMI8658_ACCEL_ODR_250HZ);
+    qmi8658_set_accel_odr(imu_sensor, QMI8658_ACCEL_ODR_500HZ); // 提高到500Hz
     qmi8658_enable_sensors(imu_sensor, QMI8658_ENABLE_GYRO | QMI8658_ENABLE_ACCEL);
 
     /* 如果未校准，进行陀螺仪校准 */
@@ -304,71 +301,55 @@ static button_state_t read_button_state()
  */
 static void mouse_sensor_task(void *arg)
 {
-
-    /* 主循环 */
     while (1)
     {
-        /* 检查IMU初始化状态 */
-        if (!imu_initialized || !imu_sensor)
-        {
-            vTaskDelay(pdMS_TO_TICKS(500));
-            continue;
-        }
-
-        /* 读取陀螺仪和加速度计数据 */
-        float gx, gy, gz, ax, ay, az;
-        esp_err_t gyro_err = qmi8658_read_gyro_rads(imu_sensor, &gx, &gy, &gz);
-        esp_err_t accel_err = qmi8658_read_accel_mg(imu_sensor, &ax, &ay, &az);
-        
-        if (gyro_err != ESP_OK || accel_err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "传感器读取失败 - 陀螺仪: %d, 加速度: %d", gyro_err, accel_err);
-            vTaskDelay(pdMS_TO_TICKS(50));
-            continue;
-        }
-        
-        // 每5秒输出一次传感器数据，避免日志过多
-        static uint32_t last_log_time = 0;
-        uint32_t current_log_time = esp_log_timestamp();
-        if (current_log_time - last_log_time > 5000) {
-            ESP_LOGI(TAG, "传感器数据 - 陀螺仪(rad/s): X=%.3f Y=%.3f Z=%.3f", gx, gy, gz);
-            ESP_LOGI(TAG, "传感器数据 - 加速度(mg): X=%.1f Y=%.1f Z=%.1f", ax, ay, az);
-            last_log_time = current_log_time;
-        }
-
-        /* 应用陀螺仪校准偏移量 */
-        if (gyro_calibrated)
-        {
-            gx -= gyro_offset_x;
-            gy -= gyro_offset_y;
-            gz -= gyro_offset_z;
-        }
-
-        /* 计算鼠标移动值 */
-        int8_t mx = (fabs(gx) > g_config.gyro_threshold) ? (int8_t)(gx * g_config.mouse_sensitivity) : 0;
-        int8_t my = (fabs(gz) > g_config.gyro_threshold) ? (int8_t)(gz * g_config.mouse_sensitivity) : 0;
-
-        /* 每5秒输出一次阈值和计算结果 */
-        if (current_log_time - last_log_time > 5000) {
-            ESP_LOGI(TAG, "阈值判断 - 阈值=%.3f, X轴=%.3f, Z轴=%.3f", 
-                    g_config.gyro_threshold, fabs(gx), fabs(gz));
-            ESP_LOGI(TAG, "鼠标移动值 - X=%d, Y=%d, 灵敏度=%.2f", 
-                    mx, my, g_config.mouse_sensitivity);
-        }
-
-        /* 读取按键状态并处理消抖 */
-        button_state_t new_state = read_button_state();
-        uint32_t now_time = esp_log_timestamp();
-        if (new_state != current_button_state && now_time - button_state_start_time > BUTTON_DEBOUNCE_TIME)
-        {
-            last_button_state = current_button_state;
-            current_button_state = new_state;
-            button_state_start_time = now_time;
-        }
-
-        /* 发送HID报告 */
         if (sec_conn)
         {
+
+            /* 读取陀螺仪和加速度计数据 */
+            float gx, gy, gz;
+            qmi8658_read_gyro_dps(imu_sensor, &gx, &gy, &gz);
+
+            // float ax, ay, az;
+            // qmi8658_read_accel_mg(imu_sensor, &ax, &ay, &az);
+
+            /* 应用陀螺仪校准偏移量 */
+            if (gyro_calibrated)
+            {
+                gx -= gyro_offset_x;
+                gy -= gyro_offset_y;
+                gz -= gyro_offset_z;
+            }
+
+            /* 计算鼠标移动值 */
+            int8_t mx = (fabs(gx) > g_config.gyro_threshold) ? (int8_t)(gx * g_config.mouse_sensitivity) : 0;
+            int8_t my = (fabs(gz) > g_config.gyro_threshold) ? (int8_t)(gz * g_config.mouse_sensitivity) : 0;
+
+            // // 每1秒输出一次传感器数据，避免日志过多
+            // static uint32_t last_log_time = 0;
+            // uint32_t current_log_time = esp_log_timestamp();
+
+            // if (current_log_time - last_log_time > 1000)
+            // {
+            //     ESP_LOGI(TAG, "传感器数据 - 陀螺仪(rad/s): X=%.3f Y=%.3f Z=%.3f", gx, gy, gz);
+            //     ESP_LOGI(TAG, "阈值判断 - 阈值=%.3f, X轴=%.3f, Z轴=%.3f",
+            //              g_config.gyro_threshold, fabs(gx), fabs(gz));
+            //     ESP_LOGI(TAG, "鼠标移动值 - X=%d, Y=%d, 灵敏度=%.2f",
+            //              mx, my, g_config.mouse_sensitivity);
+
+            //     last_log_time = current_log_time;
+            // }
+
+            /* 读取按键状态并处理消抖 */
+            button_state_t new_state = read_button_state();
+            uint32_t now_time = esp_log_timestamp();
+            if (new_state != current_button_state && now_time - button_state_start_time > BUTTON_DEBOUNCE_TIME)
+            {
+                last_button_state = current_button_state;
+                current_button_state = new_state;
+                button_state_start_time = now_time;
+            }
+
             /* 处理按键状态 - 左键和右键按下期间都保持按下状态，可以实现拖拽 */
             uint8_t buttons = 0;
             if (current_button_state == BUTTON_STATE_LEFT)
@@ -389,8 +370,8 @@ static void mouse_sensor_task(void *arg)
                     esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, 1);
                     last_wheel_time = current_time;
                 }
-                /* 长按时，每隔200ms触发一次滚动 */
-                else if (current_time - last_wheel_time > 200)
+                /* 长按时，每隔500ms触发一次滚动 */
+                else if (current_time - last_wheel_time > 500)
                 {
                     esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, 1);
                     last_wheel_time = current_time;
@@ -405,26 +386,27 @@ static void mouse_sensor_task(void *arg)
                     esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, -1);
                     last_wheel_time = current_time;
                 }
-                /* 长按时，每隔200ms触发一次滚动 */
-                else if (current_time - last_wheel_time > 200)
+                /* 长按时，每隔500ms触发一次滚动 */
+                else if (current_time - last_wheel_time > 500)
                 {
                     esp_hidd_send_mouse_value(hid_conn_id, 0, 0, 0, -1);
                     last_wheel_time = current_time;
                 }
             }
 
-            /* 鼠标移动和按键事件始终发送，支持拖拽操作 */
-            esp_hidd_send_mouse_value(hid_conn_id, buttons, mx, my, 0);
-            
-            /* 每5秒输出一次发送状态 */
-            if (current_log_time - last_log_time > 5000) {
-                ESP_LOGI(TAG, "HID发送 - 按键=%d, 移动: X=%d, Y=%d", buttons, mx, my);
+            static uint32_t last_time = 0;
+            uint32_t currenttime = esp_log_timestamp();
+
+            if (currenttime - last_time > g_config.sample_rate_ms)
+            {
+                /* 鼠标移动和按键事件始终发送，支持拖拽操作 */
+                esp_hidd_send_mouse_value(hid_conn_id, buttons, mx, my, 0);
+                last_time = currenttime;
             }
-        } else {
-            /* 每5秒输出一次连接状态 */
-            if (current_log_time - last_log_time > 5000) {
-                ESP_LOGI(TAG, "未连接 - 安全连接标志=%d, 连接ID=%d", sec_conn, hid_conn_id);
-            }
+        }
+        else
+        {
+            vTaskDelay(pdMS_TO_TICKS(5)); // 从10ms减少到5ms，更快检测连接
         }
     }
 }
@@ -537,11 +519,11 @@ static void hidd_event_callback(esp_hidd_cb_event_t event, esp_hidd_cb_param_t *
 esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
 {
     ESP_LOGI(TAG, "初始化BLE HID鼠标 - 设备名称: %s", config->device_name);
-    
+
     /* 保存配置 */
     memcpy(&g_config, config, sizeof(ble_hid_mouse_config_t));
-    
-    ESP_LOGI(TAG, "鼠标配置 - 灵敏度: %.2f, 阈值: %.2f", 
+
+    ESP_LOGI(TAG, "鼠标配置 - 灵敏度: %.2f, 阈值: %.2f",
              g_config.mouse_sensitivity, g_config.gyro_threshold);
     /* 初始化NVS闪存 */
     esp_err_t ret = nvs_flash_init();
@@ -586,15 +568,18 @@ esp_err_t ble_hid_mouse_init(const ble_hid_mouse_config_t *config)
     init_button_adc();
 
     /* 初始化IMU传感器 */
-    if (init_imu_sensor()) {
+    if (init_imu_sensor())
+    {
         ESP_LOGI(TAG, "IMU传感器初始化成功");
-    } else {
+    }
+    else
+    {
         ESP_LOGE(TAG, "IMU传感器初始化失败");
     }
 
-    /* 创建鼠标任务 */
+    /* 创建鼠标任务 - 提高优先级 */
     ESP_LOGI(TAG, "创建鼠标传感器任务");
-    xTaskCreate(mouse_sensor_task, "mouse_task", 4096, NULL, 6, &mouse_task_handle);
+    xTaskCreate(mouse_sensor_task, "mouse_task", 4096, NULL, 10, &mouse_task_handle);
 
     return ESP_OK;
 }
