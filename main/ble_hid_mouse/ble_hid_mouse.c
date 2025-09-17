@@ -46,7 +46,6 @@ static const char *TAG = "BLE_HID_MOUSE";
 /* 按键和ADC相关参数 */
 #define BUTTON_DEBOUNCE_TIME 30      /* 从50ms减少到30ms */
 #define ADC_SAMPLES 5                /* ADC采样次数 */
-#define CALIBRATION_DURATION_MS 2000 /* 陀螺仪校准持续时间(ms) */
 
 /* 按键ADC阈值 */
 #define BUTTON_RIGHT_MIN 0
@@ -91,16 +90,56 @@ static TaskHandle_t mouse_task_handle = NULL; /* 鼠标任务句柄 */
 static adc_oneshot_unit_handle_t adc1_handle; /* ADC单次转换句柄 */
 static bool adc_initialized = false;          /* ADC初始化标志 */
 
-/* 陀螺仪校准变量 */
-static bool gyro_calibrated = false; /* 陀螺仪校准标志 */
-static float gyro_offset_x = 0;      /* X轴偏移量 */
-static float gyro_offset_y = 0;      /* Y轴偏移量 */
-static float gyro_offset_z = 0;      /* Z轴偏移量 */
-
 /* 按键状态变量 */
 static button_state_t current_button_state = BUTTON_STATE_IDLE; /* 当前按键状态 */
 static button_state_t last_button_state = BUTTON_STATE_IDLE;    /* 上一次按键状态 */
 static uint32_t button_state_start_time = 0;                    /* 按键状态开始时间 */
+
+/* 卡尔曼滤波器结构定义 */
+typedef struct {
+    float x;      /* 状态估计 */
+    float p;      /* 估计误差协方差 */
+    float q;      /* 过程噪声协方差 */
+    float r;      /* 测量噪声协方差 */
+    float k;      /* 卡尔曼增益 */
+} kalman_filter_t;
+
+/**
+ * @brief 初始化卡尔曼滤波器
+ *
+ * @param filter 卡尔曼滤波器指针
+ * @param q 过程噪声协方差
+ * @param r 测量噪声协方差
+ * @param p 初始估计误差协方差
+ * @param initial_value 初始状态估计值
+ */
+static void kalman_init(kalman_filter_t *filter, float q, float r, float p, float initial_value)
+{
+    filter->x = initial_value;
+    filter->p = p;
+    filter->q = q;
+    filter->r = r;
+}
+
+/**
+ * @brief 卡尔曼滤波器更新
+ *
+ * @param filter 卡尔曼滤波器指针
+ * @param measurement 测量值
+ * @return float 滤波后的估计值
+ */
+static float kalman_update(kalman_filter_t *filter, float measurement)
+{
+    /* 预测步骤 */
+    filter->p = filter->p + filter->q;
+    
+    /* 更新步骤 */
+    filter->k = filter->p / (filter->p + filter->r);
+    filter->x = filter->x + filter->k * (measurement - filter->x);
+    filter->p = (1 - filter->k) * filter->p;
+    
+    return filter->x;
+}
 
 /* 函数声明 */
 static void hidd_event_callback(esp_hidd_cb_event_t event, esp_hidd_cb_param_t *param);
@@ -136,43 +175,7 @@ static esp_ble_adv_params_t hidd_adv_params = {
     .channel_map = ADV_CHNL_ALL,
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY};
 
-/**
- * @brief 陀螺仪校准
- *
- * @return esp_err_t 校准结果
- */
-static esp_err_t gyro_calibration()
-{
-    /* 采样并累计陀螺仪数据 */
-    float sx = 0, sy = 0, sz = 0;
-    int cnt = 0;
-    uint32_t start = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-    while ((xTaskGetTickCount() * portTICK_PERIOD_MS - start) < CALIBRATION_DURATION_MS)
-    {
-        float gx, gy, gz;
-        if (qmi8658_read_gyro_dps(imu_sensor, &gx, &gy, &gz) == ESP_OK)
-        {
-            sx += gx;
-            sy += gy;
-            sz += gz;
-            cnt++;
-        }
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-
-    /* 检查是否获得足够的样本 */
-    if (cnt < 10)
-        return ESP_ERR_INVALID_RESPONSE;
-
-    /* 计算偏移量 */
-    gyro_offset_x = sx / cnt;
-    gyro_offset_y = sy / cnt;
-    gyro_offset_z = sz / cnt;
-    gyro_calibrated = true;
-
-    return ESP_OK;
-}
 
 /**
  * @brief 初始化IMU传感器
@@ -221,15 +224,6 @@ static bool init_imu_sensor()
     qmi8658_set_accel_odr(imu_sensor, QMI8658_ACCEL_ODR_500HZ); // 提高到500Hz
     qmi8658_enable_sensors(imu_sensor, QMI8658_ENABLE_GYRO | QMI8658_ENABLE_ACCEL);
 
-    /* 如果未校准，进行陀螺仪校准 */
-    if (!gyro_calibrated)
-    {
-        if (gyro_calibration() != ESP_OK)
-        {
-            gyro_offset_x = gyro_offset_y = gyro_offset_z = 0;
-            gyro_calibrated = true;
-        }
-    }
     imu_initialized = true;
     return true;
 }
@@ -301,45 +295,87 @@ static button_state_t read_button_state()
  */
 static void mouse_sensor_task(void *arg)
 {
+    /* 初始化卡尔曼滤波器 */
+    kalman_filter_t kalman_x, kalman_y, kalman_z;
+    kalman_init(&kalman_x, 0.01, 0.1, 1.0, 0.0); /* X轴滤波器 - 实际为YAW */
+    kalman_init(&kalman_y, 0.01, 0.1, 1.0, 0.0); /* Y轴滤波器 */
+    kalman_init(&kalman_z, 0.01, 0.1, 1.0, 0.0); /* Z轴滤波器 - 实际为PITCH */
+    
+    /* 跟踪角度变化 */
+    float angle_x = 0.0f, angle_y = 0.0f, angle_z = 0.0f;
+    float last_angle_x = 0.0f, last_angle_z = 0.0f;
+    
+    /* 调试信息计时 */
+    uint32_t last_debug_time = 0;
+    
     while (1)
     {
         if (sec_conn)
         {
-
             /* 读取陀螺仪和加速度计数据 */
             float gx, gy, gz;
+            float ax, ay, az;
+            
             qmi8658_read_gyro_dps(imu_sensor, &gx, &gy, &gz);
+            qmi8658_read_accel_mg(imu_sensor, &ax, &ay, &az);
 
-            // float ax, ay, az;
-            // qmi8658_read_accel_mg(imu_sensor, &ax, &ay, &az);
-
-            /* 应用陀螺仪校准偏移量 */
-            if (gyro_calibrated)
+            /* 计算时间增量(秒) */
+            float dt = g_config.sample_rate_ms / 1000.0f;
+            
+            /* 更新角度 - 通过积分角速度（坐标系已调整） */
+            angle_x += gx * dt;  // 实际是YAW (原来的ROLL)
+            angle_y += gy * dt;  // 保持不变
+            angle_z += gz * dt;  // 实际是PITCH (原来的YAW)
+            
+            /* 使用加速度计数据计算姿态角 (调整为正确的物理意义) */
+            // 因为IMU安装方向不同，需要调整加速度计数据的解释
+            float accel_angle_x = atan2f(ay, sqrtf(ax*ax + az*az)) * 180.0f / M_PI;  // 实际是YAW
+            float accel_angle_z = atan2f(-ax, sqrtf(ay*ay + az*az)) * 180.0f / M_PI; // 实际是PITCH
+            
+            /* 互补滤波融合数据 - 加速度计只能校正Roll和Pitch */
+            float yaw = 0.98f * angle_x + 0.02f * accel_angle_x;   // 实际是YAW (原来的Roll)
+            float pitch = 0.98f * angle_z + 0.02f * accel_angle_z; // 实际是PITCH (原来的Yaw)
+            
+            /* 卡尔曼滤波融合 */
+            float filtered_yaw = kalman_update(&kalman_x, yaw);     // 实际是YAW
+            float filtered_pitch = kalman_update(&kalman_z, pitch); // 实际是PITCH
+            
+            /* 计算角度变化 */
+            float delta_yaw = filtered_yaw - last_angle_x;    // YAW变化
+            float delta_pitch = filtered_pitch - last_angle_z; // PITCH变化
+            
+            /* 更新上次角度 */
+            last_angle_x = filtered_yaw;   // 保存YAW
+            last_angle_z = filtered_pitch; // 保存PITCH
+            
+            /* 将角度变化转换为鼠标移动 - pitch控制鼠标上下(Y轴)，yaw控制鼠标左右(X轴) */
+            int16_t mx = 0, my = 0;
+            
+            // YAW控制鼠标左右移动(X轴)
+            if (fabs(delta_yaw) > g_config.gyro_threshold) {
+                mx = (int16_t)(delta_yaw * g_config.mouse_sensitivity);
+            }
+            
+            // PITCH控制鼠标上下移动(Y轴)
+            if (fabs(delta_pitch) > g_config.gyro_threshold) {
+                my = (int16_t)(delta_pitch * g_config.mouse_sensitivity);
+            }
+            
+            /* 每1秒输出一次详细调试信息 */
+            uint32_t current_time = esp_log_timestamp();
+            if (current_time - last_debug_time > 1000)
             {
-                gx -= gyro_offset_x;
-                gy -= gyro_offset_y;
-                gz -= gyro_offset_z;
+                ESP_LOGI(TAG, "====== 鼠标传感器调试信息 ======");
+                ESP_LOGI(TAG, "滤波后角度(deg): YAW=%.2f PITCH=%.2f", 
+                         filtered_yaw, filtered_pitch);
+                ESP_LOGI(TAG, "角度变化: dYAW=%.2f dPITCH=%.2f", delta_yaw, delta_pitch);
+                ESP_LOGI(TAG, "鼠标移动: X=%d Y=%d", mx, my);
+                ESP_LOGI(TAG, "================================");
+                
+                last_debug_time = current_time;
             }
 
-            /* 计算鼠标移动值 */
-            int8_t mx = (fabs(gx) > g_config.gyro_threshold) ? (int8_t)(gx * g_config.mouse_sensitivity) : 0;
-            int8_t my = (fabs(gz) > g_config.gyro_threshold) ? (int8_t)(gz * g_config.mouse_sensitivity) : 0;
-
-            // // 每1秒输出一次传感器数据，避免日志过多
-            // static uint32_t last_log_time = 0;
-            // uint32_t current_log_time = esp_log_timestamp();
-
-            // if (current_log_time - last_log_time > 1000)
-            // {
-            //     ESP_LOGI(TAG, "传感器数据 - 陀螺仪(rad/s): X=%.3f Y=%.3f Z=%.3f", gx, gy, gz);
-            //     ESP_LOGI(TAG, "阈值判断 - 阈值=%.3f, X轴=%.3f, Z轴=%.3f",
-            //              g_config.gyro_threshold, fabs(gx), fabs(gz));
-            //     ESP_LOGI(TAG, "鼠标移动值 - X=%d, Y=%d, 灵敏度=%.2f",
-            //              mx, my, g_config.mouse_sensitivity);
-
-            //     last_log_time = current_log_time;
-            // }
-
+            /* 以下代码保持不变 */
             /* 读取按键状态并处理消抖 */
             button_state_t new_state = read_button_state();
             uint32_t now_time = esp_log_timestamp();
@@ -359,7 +395,7 @@ static void mouse_sensor_task(void *arg)
 
             /* 滚轮事件处理 - 支持单击和长按 */
             static uint32_t last_wheel_time = 0;
-            uint32_t current_time = esp_log_timestamp();
+            /* 使用前面已定义的current_time变量 */
 
             /* 滚轮向上滚动 */
             if (current_button_state == BUTTON_STATE_SCROLL_UP)
