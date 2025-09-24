@@ -1,6 +1,7 @@
 #include "wifi_board.h"
 #include "codecs/es8311_audio_codec.h"
 #include "config.h"
+#include "mcp_server.h"
 #include <esp_log.h>
 #include <driver/i2c_master.h>
 #include <driver/gpio.h>
@@ -32,6 +33,79 @@ private:
 
     void InitializeTools()
     {
+        auto &mcp = McpServer::GetInstance();
+        mcp.AddTool("self.tv.turn_on", "打开电视", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 打开电视");
+            return std::string("电视已打开");
+        });
+        mcp.AddTool("self.air_conditioner.turn_on", "打开空调", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 打开空调");
+            return std::string("空调已打开");
+        });
+        mcp.AddTool("self.fan.turn_on", "打开风扇", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 打开风扇");
+            return std::string("风扇已打开");
+        });
+        mcp.AddTool("self.light.turn_on", "打开照明灯", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 打开照明灯");
+            return std::string("照明灯已打开");
+        });
+        mcp.AddTool("self.air_conditioner.set_cool_mode", "空调制冷模式并设定温度", PropertyList({
+            Property("temperature", kPropertyTypeInteger, 16, 30)
+        }), [](const PropertyList& props) -> ReturnValue {
+            int temp = props["temperature"].value<int>();
+            ESP_LOGI(TAG, "MCP: 空调制冷模式，设定温度%d度", temp);
+            return std::string("空调已切换到制冷模式，温度设为" + std::to_string(temp) + "度");
+        });
+        mcp.AddTool("self.air_conditioner.set_heat_mode", "空调制热模式并设定温度", PropertyList({
+            Property("temperature", kPropertyTypeInteger, 16, 30)
+        }), [](const PropertyList& props) -> ReturnValue {
+            int temp = props["temperature"].value<int>();
+            ESP_LOGI(TAG, "MCP: 空调制热模式，设定温度%d度", temp);
+            return std::string("空调已切换到制热模式，温度设为" + std::to_string(temp) + "度");
+        });
+        mcp.AddTool("self.fan.set_speed", "风扇风速调节", PropertyList({
+            Property("speed", kPropertyTypeInteger, 1, 5)
+        }), [](const PropertyList& props) -> ReturnValue {
+            int speed = props["speed"].value<int>();
+            ESP_LOGI(TAG, "MCP: 风扇风速设为%d", speed);
+            return std::string("风扇风速已设为" + std::to_string(speed));
+        });
+        mcp.AddTool("self.fan.set_max_speed", "风扇最大风速", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 风扇最大风速");
+            return std::string("风扇已切换到最大风速");
+        });
+        mcp.AddTool("self.fan.set_min_speed", "风扇最小风速", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 风扇最小风速");
+            return std::string("风扇已切换到最小风速");
+        });
+        mcp.AddTool("self.fan.turn_off", "关闭风扇", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 关闭风扇");
+            return std::string("风扇已关闭");
+        });
+        mcp.AddTool("self.tv.turn_off", "关闭电视", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 关闭电视");
+            return std::string("电视已关闭");
+        });
+        mcp.AddTool("self.air_conditioner.turn_off", "关闭空调", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 关闭空调");
+            return std::string("空调已关闭");
+        });
+        mcp.AddTool("self.mouse.switch_mode_pc", "切换鼠标为电脑模式", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 鼠标切换为电脑模式");
+            // TODO: 实际切换代码
+            return std::string("鼠标已切换为电脑模式");
+        });
+        mcp.AddTool("self.mouse.switch_mode_phone", "切换鼠标为手机模式", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 鼠标切换为手机模式");
+            // TODO: 实际切换代码
+            return std::string("鼠标已切换为手机模式");
+        });
+        mcp.AddTool("self.mouse.switch_mode_tablet", "切换鼠标为平板模式", PropertyList(), [](const PropertyList&) -> ReturnValue {
+            ESP_LOGI(TAG, "MCP: 鼠标切换为平板模式");
+            // TODO: 实际切换代码
+            return std::string("鼠标已切换为平板模式");
+        });
     }
 
 public:
